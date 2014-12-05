@@ -31,145 +31,77 @@ Feel free to ask any questions you have.
 
 [1] http://www.pixelbeat.org/docs/terminal_colours
 """
-import sys
 import re
-import itertools
-
+import fileinput
+import sys
 from optparse import OptionParser, OptionGroup
+
 
 UNDERSCORE_SEQ = '\033[4m'
 RESET_SEQ = '\033[0m'
 COLOR_SEQ = '\033[95m'
 
-parser = OptionParser(usage="%prog [OPTIONS] PATTERN [FILE]... ")
-group = OptionGroup(parser, "Output formatting", "Following are mutually exclusive options")
-group.add_option("-u", "--underscore", action="store_true", dest="underscore", default=False, help="draw underscores under the matching text")
-group.add_option("-c", "--color", action="store_true", dest="color", default=False, help="highlight matching text")
-group.add_option("-m", "--machine", action="store_true", dest="machine", default=False, help="generate machine readable output\n                   format: file_name:no_line:start_pos:matched_text")
-parser.add_option_group(group)
-options, args = parser.parse_args()
-if options.underscore + options.color + options.machine > 1:
-    parser.error("Options -u(--underscore), -c(--color), -m(--machine) are mutually exclusive.")
-if len(args) < 1:
-    parser.error('Regular expression is mandatory')
-regexp = args[0]
-files = args[1:] if args[1:] else [sys.stdin]
-print options
-print args
-
 
 class Output(object):
+    """Provides output method "show()" """
 
-    def __init__(self, options):
+    def __init__(self, options, regexp):
         self.underscore = options.underscore
         self.color = options.color
         self.machine = options.machine
+        self.regexp = regexp
 
-    def show(self, f_name, count, matches):
+    def show(self, f_name, line_no, matches):
+        """ Prints output according to formatting settings """
         if self.machine:
-            print self._machine_format(f_name, count, matches)
+            self._print_machine_format(f_name, line_no, matches)
         else:
-            print self._highlighted_format(f_name, count, matches)
+            print self._highlighted_format(f_name, line_no, matches)
 
-    def _machine_format(self, f_name, count, matches):
+    def _print_machine_format(self, f_name, count, matches):
         for match in matches:
             start_pos, end_pos = match.span()
             print ':'.join([f_name, str(count), str(start_pos), match.string[start_pos:end_pos]])
 
 
     def _highlighted_format(self, f_name, count, matches):
-        """>>> import itertools
->>> y = itertools.flatten(a)
-Traceback (most recent call last):
-  File "<stdin>", line 1, in <module>
-AttributeError: 'module' object has no attribute 'flatten'
->>> y = [j for a in x for j in a]
-Traceback (most recent call last):
-  File "<stdin>", line 1, in <module>
-NameError: name 'x' is not defined
->>> y = [j for i in a for j in i]
->>> y
-[1, 2, 3, 4, 6, 7]
->>> from itertools import chain
->>> a
-[(1, 2), (3, 4), (6, 7)]
->>> list(chain(a))
-[(1, 2), (3, 4), (6, 7)]
->>> list(chain(*a))
-[1, 2, 3, 4, 6, 7]
->>> list(chain(*a))
-[1, 2, 3, 4, 6, 7]
->>> bond = list(chain(*a))
->>> bond
-[1, 2, 3, 4, 6, 7]
->>> aaa='111111111111'
->>> for i in range(len(bond)):
-...
-KeyboardInterrupt
->>> q = []
->>> for i in range(len(bond)):
-...     q.append(aaa[i:i+1]+'$')
-...
->>> q
-['1$', '1$', '1$', '1$', '1$', '1$']
->>> ''.join(q)
-'1$1$1$1$1$1$'
->>>
-"""
-
         end_seq = start_seq = ""
         if self.color or self.underscore:
             end_seq = RESET_SEQ
             start_seq = COLOR_SEQ if self.color else UNDERSCORE_SEQ
-
-        spans = [x.span for x in matches]
-        boundaries = itertools.chain(*spans)
-        start_mark = True
-        resulting_string = ""
-        for i in boundaries:
-            resulting_string += matches[0].string
+        mod = re.sub(''.join([r"(", self.regexp, r")"]), start_seq + r'\1' + end_seq, matches[0].string)
+        mod = ' '.join([f_name, '{:4d}'.format(count), mod])
+        return mod.strip()
 
 
+if __name__ == "__main__":
+    parser = OptionParser(usage="%prog [OPTIONS] PATTERN [FILE]... ")
+    group = OptionGroup(parser, "Output formatting:", \
+            "Following are mutually exclusive options:")
+    group.add_option("-u", "--underscore", action="store_true", dest="underscore", \
+            default=False, help="draw underscores under the matching text")
+    group.add_option("-c", "--color", action="store_true", dest="color", \
+            default=False, help="highlight matching text")
+    group.add_option("-m", "--machine", action="store_true", dest="machine", default=False, \
+            help="generate machine readable output\nformat: file_name:no_line:start_pos:matched_text")
+    parser.add_option_group(group)\
 
+    options, args = parser.parse_args()
 
-out = Output(options)
+    if options.underscore + options.color + options.machine > 1: #True==1, False==0
+        parser.error("Options -u(--underscore), -c(--color), -m(--machine) are mutually exclusive.")
+    if len(args) < 1:
+        parser.error('Regular expression is mandatory')
 
-for f_name in files:
-    count = 1
-    with open(f_name, 'rb') as handle:
-        for line in handle:
+    regexp = args[0]
+    args.pop(0) #now args is a list of passed files
+
+    out = Output(options, regexp)
+    try:
+        for line in fileinput.input(args): # list of files in args, or stdin if args is empty or has "-"
             matches = [_ for _ in re.finditer(regexp, line)]
             if len(matches):
-                out.show(f_name, count, line, matches)
-                print f_name, count, line.strip()
-            count += 1
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+                out.show(fileinput.filename(), fileinput.filelineno(), matches)
+    except:
+        print "Error. File not found: %s. Exiting" % fileinput.filename()
+        sys.exit(1)
