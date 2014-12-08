@@ -110,14 +110,10 @@ class Output(object):
         for i in range(len(line_splits)):
             print line_splits[i].rstrip()
             try:
-                print underline_splits[i].rstrip()
+                if len(underline_splits[i].rstrip()) > 0:
+                    print underline_splits[i].rstrip()
             except IndexError:
                 pass #No more matches at the end of line
-
-
-
-
-
 
 if __name__ == "__main__":
     parser = OptionParser(usage="%prog [OPTIONS] PATTERN [FILE]... ")
