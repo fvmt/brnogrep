@@ -34,60 +34,61 @@ Feel free to ask any questions you have.
 import re
 import fileinput
 import sys
+
 from optparse import OptionParser, OptionGroup
+from abc import ABCMeta, abstractmethod
 
-
-
-UNDERSCORE_SEQ = '\033[4m'
 RESET_SEQ = '\033[0m'
 COLOR_SEQ = '\033[95m'
 UNDERSCORE_CHARACTER = "^"
 
-def terminal_size():
-    """ from http://stackoverflow.com/questions/566746/how-to-get-console-window-width-in-python answer by
-    http://stackoverflow.com/users/362947/pascal"""
-    import fcntl, termios, struct
-    h, w, hp, wp = struct.unpack('HHHH', fcntl.ioctl(0, termios.TIOCGWINSZ, struct.pack('HHHH', 0, 0, 0, 0)))
-    return w, h
+
+class AbstractOutput(object):
+
+    __metaclass__ = ABCMeta
+
+    @abstractmethod
+    def show_line(self):
+        raise NotImplementedError
 
 
-class Output(object):
-    """Provides output method "show()" """
+class PlainOutput(AbstractOutput):
+    """Default mode: print filename, line number and line with match"""
 
-    def __init__(self, options, regexp):
-        self.underscore = options.underscore
-        self.color = options.color
-        self.machine = options.machine
+    def show_line(self, f_name, line_no, matches):
+        to_print = ' '.join([f_name, '{:4d}'.format(line_no), matches[0].string])
+        print to_print.rstrip()
+
+
+class HighlightedOutput(AbstractOutput):
+    """-c key: print filename, line number and line with matches highlighted with ansi colors"""
+
+    def __init__(self, regexp):
         self.regexp = regexp
 
-    def show(self, f_name, line_no, matches):
-        """ Prints output according to formatting settings """
-        if self.machine:
-            self._print_machine_format(f_name, line_no, matches)
-        elif self.color:
-            print self._highlighted_format(f_name, line_no, matches)
-        elif self.underscore:
-            self._print_underscore_format(f_name, line_no, matches)
-
-    def _print_machine_format(self, f_name, count, matches):
-        for match in matches:
-            start_pos, end_pos = match.span()
-            print ':'.join([f_name, str(count), str(start_pos), match.string[start_pos:end_pos]])
+    def show_line(self, f_name, line_no, matches):
+        end_seq = RESET_SEQ
+        start_seq = COLOR_SEQ
+        highlighted = re.sub(''.join([r"(", self.regexp, r")"]), start_seq + r'\1' + end_seq, matches[0].string)
+        to_print = ' '.join([f_name, '{:4d}'.format(line_no), highlighted])
+        print to_print.rstrip()
 
 
-    def _highlighted_format(self, f_name, line_no, matches):
-        end_seq = start_seq = ""
-        if self.color or self.underscore:
-            end_seq = RESET_SEQ
-            start_seq = COLOR_SEQ if self.color else UNDERSCORE_SEQ
-        mod = re.sub(''.join([r"(", self.regexp, r")"]), start_seq + r'\1' + end_seq, matches[0].string)
-        mod = ' '.join([f_name, '{:4d}'.format(line_no), mod])
-        return mod.rstrip()
+class UnderscoreOutput(AbstractOutput):
+    """-u mode: print filename, line number and line with matches highlighted by following string"""
 
-    def _print_underscore_format(self, f_name, line_no, matches):
-        width, _ = terminal_size()
+    def __init__(self):
+        self.width, _ = self._terminal_size()
+
+    def _terminal_size(self):
+        """ from http://stackoverflow.com/questions/566746/how-to-get-console-window-width-in-python answer by
+        http://stackoverflow.com/users/362947/pascal"""
+        import fcntl, termios, struct
+        h, w, hp, wp = struct.unpack('HHHH', fcntl.ioctl(1, termios.TIOCGWINSZ, struct.pack('HHHH', 0, 0, 0, 0)))
+        return w, h
+
+    def show_line(self, f_name, line_no, matches):
         line = matches[0].string
-
         occurencies = [item for sublist in [x.span() for x in matches] for item in sublist]
         occurencies.insert(0,0) #Beginning of the string. Insert spaces till the first match
         lengths_of_matches = [occurencies[x+1] - occurencies[x] for x in range(len(occurencies) - 1)]
@@ -104,8 +105,8 @@ class Output(object):
         line = line_prefix + line
         underlines = underline_prefix + underlines
 
-        line_splits = [line[x:x+width] for x in range(0, len(line), width)]
-        underline_splits = [underlines[x:x+width] for x in range(0, len(underlines), width)]
+        line_splits = [line[x:x + self.width] for x in range(0, len(line), self.width)]
+        underline_splits = [underlines[x:x + self.width] for x in range(0, len(underlines), self.width)]
 
         for i in range(len(line_splits)):
             print line_splits[i].rstrip()
@@ -114,6 +115,38 @@ class Output(object):
                     print underline_splits[i].rstrip()
             except IndexError:
                 pass #No more matches at the end of line
+
+
+class MachineOutput(AbstractOutput):
+    """Machine output as in module description"""
+
+    def show_line(self, f_name, line_no, matches):
+        for match in matches:
+            start_pos, end_pos = match.span()
+            print ':'.join([f_name, str(line_no), str(start_pos), match.string[start_pos:end_pos]])
+
+
+class Output(object):
+    """Provides output method "show()" """
+
+    def __init__(self, options, regexp):
+        self.underscore = options.underscore
+        self.color = options.color
+        self.machine = options.machine
+        self.regexp = regexp
+        if self.machine:
+            self.output = MachineOutput()
+        elif self.color:
+            self.output = HighlightedOutput(self.regexp)
+        elif self.underscore:
+            self.output = UnderscoreOutput()
+        else:
+            self.output = PlainOutput()
+
+    def show(self, f_name, line_no, matches):
+        """ Prints output according to formatting settings """
+        self.output.show_line(f_name, line_no, matches)
+
 
 if __name__ == "__main__":
     parser = OptionParser(usage="%prog [OPTIONS] PATTERN [FILE]... ")
@@ -149,9 +182,6 @@ if __name__ == "__main__":
             matches = [_ for _ in re.finditer(regexp, line)]
             if len(matches):
                 out.show(fileinput.filename(), fileinput.filelineno(), matches)
-    except:
+    except IOError:
         print "Error. File not found: %s. Exiting" % fileinput.filename()
-        raise
         sys.exit(1)
-
-
